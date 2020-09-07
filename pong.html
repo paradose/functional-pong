@@ -1,6 +1,7 @@
 <html>
     <head>
         <style>
+        
             @import url(style.css);
             p.highlight {
                 color: red;
@@ -8,11 +9,24 @@
             svg {
                 background-color: rgb(41, 41, 36);
             }
-        </style>
+        </style>                
         <script src="./dist/pong.js"></script>
     </head>
     <body>
         <h1>Pong</h1>
-        <svg id="canvas" width="600" height="600"/>
+        <svg id="canvas" width="600" height="600">
+            <g id="player" transform="translate(75,300)">
+                <rect width = "5" height= "80"
+                         style="fill:pink">
+                </rect>
+            </g>
+            <g id="computer" transform="translate(525,300)">
+                <rect width = "5" height= "80"
+                         style="fill:purple">
+                </rect>
+            </g>
+            <line x1="300" y1="600" x2="300" y2="0" stroke="grey"
+            stroke-dasharray="10 10 10" />
+        </svg>
     </body>
 </html>
