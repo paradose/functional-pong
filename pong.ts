@@ -9,6 +9,7 @@ class Vector {
   constructor(public readonly x: number = 0, public readonly y: number =0) {}
   add = (b: Vector) => new Vector(this.x + b.x, this.y + b.y);
   sub = (b: Vector) => new Vector(this.x - b.x, this.y - b.y)
+  scale = (s: number) => new Vector(this.x*s, this.y*s)
   static Zero = new Vector()
 }
 
@@ -20,7 +21,7 @@ function pong() {
   // --------*`'~*'` Actions for Streams `'*~'`*---------------
 
   class BoardMove { constructor(public readonly direction:Vector) {} }
-
+  class BallMove {constructor (public readonly direction:Vector) {} }
   // --------*`'~*'` Keyboard Observable Stream `'*~'`*---------------
 
   const keyObservables = <T>(e: Event, k: Key, result: ()=> T) => 
@@ -29,39 +30,50 @@ function pong() {
         filter(({code}) => code === k),
         map(result)),
     
-    startMoveUp = keyObservables('keydown', 'ArrowUp', () => new BoardMove(new Vector(0,8))),
-    startMoveDown = keyObservables('keydown', 'ArrowDown', () => new BoardMove(new Vector(0,-8)))
+    startMoveUp = keyObservables('keydown', 'ArrowUp', () => new BoardMove(new Vector(0,-8))),
+    startMoveDown = keyObservables('keydown', 'ArrowDown', () => new BoardMove(new Vector(0,8)))
     // need to add restart observable
   
   // -------*`'~*'` type desclarations `'*~'`*-----------------
   
   type State = Readonly<{
     player: Board,
-    computer : Board, 
-    player_score: 0,
-    computer_score:0,
+    computer : Board,
+    ball : Board, 
+    player_score: number,
+    computer_score:number,
+    max_score: number,
     gameOver: boolean
   }>
   
   type Board = Readonly<{
     id: string,
     position: Vector,
-    velocity: Vector
+    velocity: Vector,
+    // direction is the angle
+    direction: number
   }>
   
   // --------------*`'~*'` Visual Initial States`'*~'`*--------------
 
-  const playerBoard: Board = { id: "player", position: new Vector(72, 300), velocity: Vector.Zero}
-  const computerBoard: Board = {id: "computer", position: new Vector(525,300) , velocity: Vector.Zero}
-  const initialState: State = {player: playerBoard, computer: computerBoard, player_score:0, computer_score: 0, gameOver: false}
-
+  const playerBoard: Board = { id: "player", position: new Vector(72, 300), velocity: Vector.Zero, direction: 0}
+  const computerBoard: Board = {id: "computer", position: new Vector(525,300) , velocity: Vector.Zero, direction: 0}
+  const ballBody: Board = {id: "ball", position: new Vector(300,300), velocity: new Vector(2,2), direction:0 }
+  const initialState: State = {player: playerBoard, computer: computerBoard, ball: ballBody, player_score:0, computer_score: 0, gameOver: false, max_score:3 }
   // -----------*`'~*'` Reducing States and Initial Sates `'*~'`*---------------
   
   const reduceState = (s: State, e:BoardMove) =>
     e instanceof BoardMove ? {...s,
       player: {...s.player, position: s.player.position.add(e.direction)}
-    } : s
+    } : {...s, ball: {...s.ball, position: s.ball.position.add(s.ball.velocity)}} 
+// {...s, ball: {...s, position: s.ball.position.add(s.ball.velocity)}}
+    // if no move is detected we want to continue moving the ball ? -> check if it collided
 
+  // --------------*`'~*'` Subscribing Observables  `'*~'`*--------------------
+  
+  // const handleCollisions = (s: State) => {
+  //   const
+  // }
   // --------------*`'~*'` Subscribing Observables  `'*~'`*--------------------
   
   const playPong = interval(10).pipe(
@@ -76,8 +88,18 @@ function pong() {
         svg = document.getElementById("canvas")!,
         board = document.getElementById("player")!,
         attr = (e:Element,o:any) =>
-        { for(const k in o) e.setAttribute(k,String(o[k])); console.log('moving')}
+        { for(const k in o) e.setAttribute(k,String(o[k])); console.log('moving')},
+        createBallView = () => {
+          const ball = document.createElementNS(svg.namespaceURI,"circle")!;
+          attr(ball,{id:s.ball.id, cx: s.ball.position.x, cy:s.ball.position.y,r: 5});
+          ball.classList.add('ball')
+          svg.appendChild(ball)
+          return ball;
+        }
       attr(board, {transform: `translate(${s.player.position.x}, ${s.player.position.y})`})
+      const g = document.getElementById(s.ball.id) || createBallView();
+      attr(g, {cx: s.ball.position.x, cy:s.ball.position.y})
+
   }
   
   // --------*`'~*'` Restart Game Implementation `'*~'`*---------------
