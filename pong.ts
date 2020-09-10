@@ -59,7 +59,7 @@ function pong() {
 
   const playerBoard: Board = { id: "player", position: new Vector(75, 300), velocity: Vector.Zero, direction: 0}
   const computerBoard: Board = {id: "computer", position: new Vector(525,300) , velocity: Vector.Zero, direction: 0}
-  const ballBody: Board = {id: "ball", position: new Vector(300,300), velocity: new Vector(2,1), direction:0 }
+  const ballBody: Board = {id: "ball", position: new Vector(300,300), velocity: new Vector(-1,1), direction:0 }
   const initialState: State = {player: playerBoard, computer: computerBoard, ball: ballBody, player_score:0, computer_score: 0, gameOver: false, max_score:3 }
   // -----------*`'~*'` Reducing States and Initial Sates `'*~'`*---------------
   
@@ -71,7 +71,11 @@ function pong() {
   // --------------*`'~*'` Subscribing Observables  `'*~'`*--------------------
 
   const 
-    // where the magic of moving the ball occurs
+    // moveComputer = (o:Board ) => <Board>{
+    //   ...o,
+    //   position: 
+    // },
+    // where the magic happens for moving the ball
     moveBall = (o:Board) => <Board>{
       ...o,
       position: o.position.add(o.velocity)
@@ -82,12 +86,12 @@ function pong() {
       const
         hitSideWalls = s.ball.position.x <= 0  || s.ball.position.x >= 600,
         hitTopWalls = s.ball.position.y <= 0 || s.ball.position.y >= 600,
-        collideBoard = s.ball.position.sub(s.player.position)
-      return hitSideWalls ? {...s, ball : {...s.ball, velocity: new Vector(s.ball.velocity.x*-1, s.ball.velocity.y)}}
+        collidePlayerBoard = (s.ball.position.x <= s.player.position.x + 5) && (s.ball.position.y < s.player.position.y + 80) && (s.ball.position.y > s.player.position.y), 
+        collideComputerBoard = (s.ball.position.x >= s.computer.position.x + 5) && (s.ball.position.y > s.computer.position.y + 80) && (s.ball.position.y < s.computer.position.y)
+      return hitSideWalls ? {...s, ball : ballBody}
             : hitTopWalls ? {...s, ball : {...s.ball, velocity: new Vector(s.ball.velocity.x, s.ball.velocity.y*-1)}} 
+            : collidePlayerBoard||collideComputerBoard ? {...s, ball : {...s.ball, velocity: new Vector(s.ball.velocity.x*-1, s.ball.velocity.y)}} 
             : s
-      // boardCollide = s.player
-    // wall collisions
     }
   // --------------*`'~*'` Subscribing Observables  `'*~'`*--------------------
   
@@ -103,16 +107,9 @@ function pong() {
         svg = document.getElementById("canvas")!,
         board = document.getElementById("player")!,
         attr = (e:Element,o:any) =>
-        { for(const k in o) e.setAttribute(k,String(o[k])); console.log('moving')},
-        createBallView = () => {
-          const ball = document.createElementNS(svg.namespaceURI,"circle")!;
-          attr(ball,{id:s.ball.id, cx: s.ball.position.x, cy:s.ball.position.y,r: 5});
-          ball.classList.add('ball')
-          svg.appendChild(ball)
-          return ball;
-        }
+        { for(const k in o) e.setAttribute(k,String(o[k])); console.log('moving')}
       attr(board, {transform: `translate(${s.player.position.x}, ${s.player.position.y})`})
-      const g = document.getElementById(s.ball.id) || createBallView()
+      const g = document.getElementById(s.ball.id)
       attr(g, {cx: s.ball.position.x, cy:s.ball.position.y})
 
   }
@@ -126,5 +123,3 @@ function pong() {
     window.onload = ()=>{
       pong();
     }
-
-    
