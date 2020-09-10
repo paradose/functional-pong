@@ -1,6 +1,6 @@
-import * as rxjs from 'rxjs';
+
 import { fromEvent,interval } from 'rxjs'; 
-import { map,filter,merge,scan } from 'rxjs/operators';
+import { map,filter,merge,scan, flatMap, takeUntil } from 'rxjs/operators';
 
 // inspired by tim's asteroid
 // we use vector because it is immutable and returns new instances of vectors instead
@@ -8,8 +8,9 @@ import { map,filter,merge,scan } from 'rxjs/operators';
 class Vector {
   constructor(public readonly x: number = 0, public readonly y: number =0) {}
   add = (b: Vector) => new Vector(this.x + b.x, this.y + b.y);
+  len = ()=> Math.sqrt(this.x*this.x + this.y*this.y)
   sub = (b: Vector) => new Vector(this.x - b.x, this.y - b.y)
-  scale = (s: number) => new Vector(this.x*s, this.y*s)
+  scale = (s: Vector) => new Vector(this.x*s.x, this.y*s.y)
   static Zero = new Vector()
 }
 
@@ -56,24 +57,38 @@ function pong() {
   
   // --------------*`'~*'` Visual Initial States`'*~'`*--------------
 
-  const playerBoard: Board = { id: "player", position: new Vector(72, 300), velocity: Vector.Zero, direction: 0}
+  const playerBoard: Board = { id: "player", position: new Vector(75, 300), velocity: Vector.Zero, direction: 0}
   const computerBoard: Board = {id: "computer", position: new Vector(525,300) , velocity: Vector.Zero, direction: 0}
-  const ballBody: Board = {id: "ball", position: new Vector(300,300), velocity: new Vector(2,2), direction:0 }
+  const ballBody: Board = {id: "ball", position: new Vector(300,300), velocity: new Vector(2,1), direction:0 }
   const initialState: State = {player: playerBoard, computer: computerBoard, ball: ballBody, player_score:0, computer_score: 0, gameOver: false, max_score:3 }
   // -----------*`'~*'` Reducing States and Initial Sates `'*~'`*---------------
   
   const reduceState = (s: State, e:BoardMove) =>
     e instanceof BoardMove ? {...s,
       player: {...s.player, position: s.player.position.add(e.direction)}
-    } : {...s, ball: {...s.ball, position: s.ball.position.add(s.ball.velocity)}} 
-// {...s, ball: {...s, position: s.ball.position.add(s.ball.velocity)}}
-    // if no move is detected we want to continue moving the ball ? -> check if it collided
+    } : handleCollisions({...s, ball: moveBall(s.ball)}); // check if ball has collided with anything
 
   // --------------*`'~*'` Subscribing Observables  `'*~'`*--------------------
-  
-  // const handleCollisions = (s: State) => {
-  //   const
-  // }
+
+  const 
+    // where the magic of moving the ball occurs
+    moveBall = (o:Board) => <Board>{
+      ...o,
+      position: o.position.add(o.velocity)
+    },
+    // changing angles/ game state when the ball hits something 
+    handleCollisions = (s: State) => {
+    // board collision
+      const
+        hitSideWalls = s.ball.position.x <= 0  || s.ball.position.x >= 600,
+        hitTopWalls = s.ball.position.y <= 0 || s.ball.position.y >= 600,
+        collideBoard = s.ball.position.sub(s.player.position)
+      return hitSideWalls ? {...s, ball : {...s.ball, velocity: new Vector(s.ball.velocity.x*-1, s.ball.velocity.y)}}
+            : hitTopWalls ? {...s, ball : {...s.ball, velocity: new Vector(s.ball.velocity.x, s.ball.velocity.y*-1)}} 
+            : s
+      // boardCollide = s.player
+    // wall collisions
+    }
   // --------------*`'~*'` Subscribing Observables  `'*~'`*--------------------
   
   const playPong = interval(10).pipe(
@@ -97,7 +112,7 @@ function pong() {
           return ball;
         }
       attr(board, {transform: `translate(${s.player.position.x}, ${s.player.position.y})`})
-      const g = document.getElementById(s.ball.id) || createBallView();
+      const g = document.getElementById(s.ball.id) || createBallView()
       attr(g, {cx: s.ball.position.x, cy:s.ball.position.y})
 
   }
@@ -106,26 +121,10 @@ function pong() {
 
   // ~ this is the end of the pong() scope ~      
 }
-  
-
   // the following simply runs your pong function on window load.  Make sure to leave it in place.
   if (typeof window != 'undefined')
     window.onload = ()=>{
       pong();
     }
 
-  
-
-  // function playerBoard() : Board { 
-  //   return {
-  //     id: "player", 
-  //     position: new Vector(72, 300), 
-  //     velocity: Vector.Zero}
-  //   }
-    // Inside this function you will use the classes and functions 
-  // from rx.js
-  // to add visuals to the svg element in pong.html, animate them, and make them interactive.
-  // Study and complete the tasks in observable exampels first to get ideas.
-  // Course Notes showing Asteroids in FRP: https://tgdwyer.github.io/asteroids/ 
-  // You will be marked on your functional programming style
-  // as well as the functionality that you implement.
+    
