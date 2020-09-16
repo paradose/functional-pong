@@ -1,6 +1,6 @@
 
 import { fromEvent,interval } from 'rxjs'; 
-import { map,filter,merge,scan, flatMap, takeUntil } from 'rxjs/operators';
+import { map,filter,merge,scan, flatMap, takeUntil, throwIfEmpty } from 'rxjs/operators';
 
 // inspired by tim's asteroid
 // we use vector because it is immutable and returns new instances of vectors instead
@@ -12,18 +12,21 @@ class Vector {
   sub = (b: Vector) => new Vector(this.x - b.x, this.y - b.y)
   scale = (s: Vector) => new Vector(this.x*s.x, this.y*s.y)
   evenscale = (s: number) => new Vector(this.x*s, this.y*s)
+  flipy = (s: number) => new Vector(this.x, this.y*s)
   static Zero = new Vector()
 }
 
 function pong() {
   
-  type Key = 'ArrowUp' | 'ArrowDown'
+  type Key = 'ArrowUp' | 'ArrowDown' | 'KeyR'
   type Event = 'keydown' | 'keyup'
   
   // --------*`'~*'` Actions for Streams `'*~'`*---------------
 
   class BoardMove { constructor(public readonly direction:Vector) {} }
+  class RestartGameState {constructor(public readonly setGame: Boolean) {} }
   class BallMove {constructor (public readonly direction:Vector) {} }
+
   // --------*`'~*'` Keyboard Observable Stream `'*~'`*---------------
 
   const keyObservables = <T>(e: Event, k: Key, result: ()=> T) => 
@@ -33,8 +36,9 @@ function pong() {
         map(result)),
     
     startMoveUp = keyObservables('keydown', 'ArrowUp', () => new BoardMove(new Vector(0,-8))),
-    startMoveDown = keyObservables('keydown', 'ArrowDown', () => new BoardMove(new Vector(0,8)))
-    // need to add restart observable
+    startMoveDown = keyObservables('keydown', 'ArrowDown', () => new BoardMove(new Vector(0,8))),
+    restart = keyObservables('keydown', 'KeyR', () => new RestartGameState(false))
+
   
   // -------*`'~*'` type desclarations `'*~'`*-----------------
   
@@ -45,7 +49,8 @@ function pong() {
     player_score: number,
     computer_score:number,
     max_score: number,
-    gameOver: boolean
+    gameOver: boolean,
+    playerScored: boolean,
   }>
   
   type Board = Readonly<{
@@ -57,65 +62,66 @@ function pong() {
   // --------------*`'~*'` Visual Initial States`'*~'`*--------------
 
   const playerBoard: Board = { id: "player", position: new Vector(75, 300), velocity: Vector.Zero}
-  const computerBoard: Board = {id: "computer", position: new Vector(525,300) , velocity: new Vector(0,1)}
+  const computerBoard: Board = {id: "computer", position: new Vector(525,300) , velocity: new Vector(0,4)}
   const ballBody: Board = {id: "ball", position: new Vector(300,300), velocity: new Vector(-1,1)}
-  const initialState: State = {player: playerBoard, computer: computerBoard, ball: ballBody, player_score:0, computer_score: 0, gameOver: false, max_score:3 }
+  const initialState: State = {player: playerBoard, computer: computerBoard, ball: ballBody, player_score:0, computer_score: 0, gameOver: false, max_score:3, playerScored: false }
   // -----------*`'~*'` Reducing States and Initial Sates `'*~'`*---------------
-  
-  const reduceState = (s: State, e:BoardMove) =>
-    e instanceof BoardMove ? {...s,
-      player: {...s.player, position: onBoard(s.player.position,e.direction)? s.player.position.add(e.direction) : s.player.position}
-    } : handleCollisions({...s, computer: moveComputer(s.computer,s.ball), ball: moveBall(s.ball)}); // check if ball has collided with anything
-// computer: moveComputer(s.computer, s.ball)
-  // --------------*`'~*'` Subscribing Observables  `'*~'`*--------------------
-// (b.position.y + 5 *2 < c.position.y + 80/2) ? 
+
+  const reduceState = (s: State, e:BoardMove | RestartGameState) =>
+    !s.gameOver ?
+    (e instanceof BoardMove ? 
+    {...s, player: {...s.player, position: onBoard(s.player.position,e.direction)? s.player.position.add(e.direction) : s.player.position}} 
+                      : handleCollisions({...s, computer: moveComputer(s.computer,s.ball), ball: moveBall(s.ball)})) // check if ball has collided with anything
+    : e instanceof RestartGameState ? initialState : s
+
+    // --------------*`'~*'` Subscribing Observables  `'*~'`*--------------------
   const 
     moveComputer = (c:Board, b: Board) => <Board>{
       ...c,
-      position: b.position.x > 300 && onBoard(c.position, c.velocity) ? 
-                (b.position.y + 5 *2 < c.position.y + 80/2) ? c.position.add(c.velocity.evenscale(-1)) 
-                : c.position.add(c.velocity) 
+      position: b.position.x > 300? 
+                ((b.position.y + 5 *2 < c.position.y + 80/2) ? c.position.add(c.velocity.evenscale(-1)) 
+                : c.position.add(c.velocity))
                 : c.position
     },
-    // heigh of the board is 80 and canvas size.
+    // heighT of the board is 80 and canvas size.
     onBoard = (start: Vector, dest: Vector) => (start.add(dest).y <= 600-80 ) && (start.add(dest).y >=0),
-    // where the magic happens for moving the ball
-    moveBall = (o:Board) => <Board>{
-      ...o,
-      position: o.position.add(o.velocity)
-    },
-    // true if player score, false if computer scored
-    playerScored = (v: Vector) => v.x > 300 ? 1 : 0,
-    computerScored = (v: Vector) => v.x < 300 ? 1 : 0, 
+    moveBall = (o:Board) => <Board>{     ...o, position: o.position.add(o.velocity)},
+    // true if player score, false if computer scored, resets ball to original position
+    changeScore = (s: State) => s.ball.position.x < 300 ? {...s, ball: ballBody, player_score: s.player_score+1} 
+                                : {...s, ball: ballBody, computer_score: s.computer_score+1, playerScored: false }, 
+    
+    checkGameOver = (s:State) => <State>{...s, gameOver : s.player_score==s.max_score || s.computer_score==s.max_score},
     // changing angles/ game state when the ball hits something 
-    handleCollisions = (s: State) => {
+    handleCollisions = (s: State) => { 
+
     // board collision
       const 
         hitSideWalls = s.ball.position.x <= 0  || s.ball.position.x >= 600,
         hitTopWalls = s.ball.position.y <= 0 || s.ball.position.y >= 600,
-        collidePlayerBoard = (s.ball.position.x <= s.player.position.x + 5) && (s.ball.position.y < s.player.position.y + 80) && (s.ball.position.y > s.player.position.y), 
-        collideComputerBoard = (s.ball.position.x >= s.computer.position.x) && (s.ball.position.y < s.computer.position.y + 80) && (s.ball.position.y > s.computer.position.y)
-      return hitSideWalls ? {...s, ball : ballBody, computer_score: s.computer_score + computerScored(s.ball.position), player_score: s.player_score + playerScored(s.ball.position) }
-            : hitTopWalls ? {...s, ball : {...s.ball, velocity: new Vector(s.ball.velocity.x, s.ball.velocity.y*-1)}} 
+        collidePlayerBoard = (s.ball.position.x <= s.player.position.x + 5 && s.ball.position.x >= s.player.position.x) && (s.ball.position.y < s.player.position.y + 80) && (s.ball.position.y > s.player.position.y), 
+        collideComputerBoard = (s.ball.position.x >= s.computer.position.x-5 && s.ball.position.x <= s.computer.position.x) 
+                              && (s.ball.position.y < s.computer.position.y + 80) && (s.ball.position.y > s.computer.position.y)
+        return hitSideWalls ? checkGameOver(changeScore(s))
+            : hitTopWalls ? {...s, ball : {...s.ball, velocity: s.ball.velocity.flipy(-1)}} 
             : collidePlayerBoard || collideComputerBoard ? {...s, ball : {...s.ball, velocity: new Vector(s.ball.velocity.x*-1, s.ball.velocity.y)}}
             : s
     }
   // --------------*`'~*'` Subscribing Observables  `'*~'`*--------------------
-  
+                                // {...s, ball : ballBody, computer_score: s.computer_score + computerScored(s.ball.position), player_score: s.player_score + playerScored(s.ball.position), gameOver: true }
   const playPong = interval(10).pipe(
-    merge(startMoveUp, startMoveDown),
-    scan(reduceState, initialState)
+    merge(startMoveUp, startMoveDown, restart),
+    scan(reduceState, initialState),
     ).subscribe(updateView);
+  
 
-
-  // ------------*`'~*'` Updating Game View Subscription `'*~'`*-----------------
+  // ------------*`'~*'` Updating GameR View Subscription `'*~'`*-----------------
   function updateView(s: State) {
     const
         svg = document.getElementById("canvas")!,
         board = document.getElementById("player")!,
         computer = document.getElementById("computer")!,
         attr = (e:Element,o:any) =>
-        { for(const k in o) e.setAttribute(k,String(o[k])); console.log('moving')}
+        { for(const k in o) e.setAttribute(k,String(o[k]));}
       attr(board, {transform: `translate(${s.player.position.x}, ${s.player.position.y})`})
       attr(computer, {transform: `translate(${s.computer.position.x}, ${s.computer.position.y})`})
       const g = document.getElementById(s.ball.id)
@@ -124,8 +130,14 @@ function pong() {
       const cscore = document.getElementById("computerscore")
       pscore.innerHTML = s.player_score.toString()
       cscore.innerHTML = s.computer_score.toString()
+      if (s.gameOver) {
+        const v = document.createElementNS(svg.namespaceURI, "text")!;
+        attr(v,{x:300/6,y:300/2,class:"gameover"});
+        const winner = s.playerScored ? "won" : "lost";
+        v.textContent = "You" + winner + "press R to restart!";
+        svg.appendChild(v);
+      }
   }
-  
   // --------*`'~*'` Restart Game Implementation `'*~'`*---------------
 
   // ~ this is the end of the pong() scope ~      
