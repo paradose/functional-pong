@@ -3,16 +3,15 @@ import { fromEvent,interval } from 'rxjs';
 import { map,filter,merge,scan, flatMap, takeUntil, throwIfEmpty } from 'rxjs/operators';
 
 // inspired by tim's asteroid
-// we use vector because it is immutable and returns new instances of vectors instead
-// of changing its data in place.
+// we use vector because it is immutable and returns new instances of vectors instead of changing its data in place.
 class Vector {
   constructor(public readonly x: number = 0, public readonly y: number =0) {}
   add = (b: Vector) => new Vector(this.x + b.x, this.y + b.y);
-  len = ()=> Math.sqrt(this.x*this.x + this.y*this.y)
   sub = (b: Vector) => new Vector(this.x - b.x, this.y - b.y)
   scale = (s: Vector) => new Vector(this.x*s.x, this.y*s.y)
   evenscale = (s: number) => new Vector(this.x*s, this.y*s)
   flipy = (s: number) => new Vector(this.x, this.y*s)
+  flipx = (s: number) => new Vector(this.x*s, this.y)
   static Zero = new Vector()
 }
 
@@ -57,40 +56,43 @@ function pong() {
     id: string,
     position: Vector,
     velocity: Vector,
+    angle : number,
   }>
   
   // --------------*`'~*'` Visual Initial States`'*~'`*--------------
 
-  const playerBoard: Board = { id: "player", position: new Vector(75, 300), velocity: Vector.Zero}
-  const computerBoard: Board = {id: "computer", position: new Vector(525,300) , velocity: new Vector(0,4)}
-  const ballBody: Board = {id: "ball", position: new Vector(300,300), velocity: new Vector(-1,1)}
-  const initialState: State = {player: playerBoard, computer: computerBoard, ball: ballBody, player_score:0, computer_score: 0, gameOver: false, max_score:3, playerScored: false }
+  const playerBoard: Board = { id: "player", position: new Vector(75, 300), velocity: Vector.Zero, angle: 0}
+  const computerBoard: Board = {id: "computer", position: new Vector(525,300) , velocity: new Vector(0,4), angle: 0}
+  const ballBody: Board = {id: "ball", position: new Vector(300,300), velocity: new Vector(2,2), angle: 360}
+  const initialState: State = {player: playerBoard, computer: computerBoard, ball: ballBody, player_score:0, computer_score: 0, gameOver: false, max_score:7, playerScored: false }
+  
   // -----------*`'~*'` Reducing States and Initial Sates `'*~'`*---------------
 
   const reduceState = (s: State, e:BoardMove | RestartGameState) =>
     !s.gameOver ?
     (e instanceof BoardMove ? 
     {...s, player: {...s.player, position: onBoard(s.player.position,e.direction)? s.player.position.add(e.direction) : s.player.position}} 
-                      : handleCollisions({...s, computer: moveComputer(s.computer,s.ball), ball: moveBall(s.ball)})) // check if ball has collided with anything
+                    : handleCollisions({...s, computer: moveComputer(s.computer,s.ball), ball: moveBall(s.ball)}) ) // check if ball has collided with anything
     : e instanceof RestartGameState ? initialState : s
 
-    // --------------*`'~*'` Subscribing Observables  `'*~'`*--------------------
+  // --------------*`'~*'` Subscribing Observables  `'*~'`*--------------------
   const 
     moveComputer = (c:Board, b: Board) => <Board>{
       ...c,
-      position: b.position.x > 300? 
+      position: b.position.x > 300 ? 
                 ((b.position.y + 5 *2 < c.position.y + 80/2) ? c.position.add(c.velocity.evenscale(-1)) 
                 : c.position.add(c.velocity))
                 : c.position
     },
     // heighT of the board is 80 and canvas size.
     onBoard = (start: Vector, dest: Vector) => (start.add(dest).y <= 600-80 ) && (start.add(dest).y >=0),
-    moveBall = (o:Board) => <Board>{     ...o, position: o.position.add(o.velocity)},
+    moveBall = (o:Board) => <Board>{     ...o, position: o.position.add(ballCalc(o.angle,2))},
     // true if player score, false if computer scored, resets ball to original position
     changeScore = (s: State) => s.ball.position.x < 300 ? {...s, ball: ballBody, player_score: s.player_score+1} 
                                 : {...s, ball: ballBody, computer_score: s.computer_score+1, playerScored: false }, 
     
     checkGameOver = (s:State) => <State>{...s, gameOver : s.player_score==s.max_score || s.computer_score==s.max_score},
+
     // changing angles/ game state when the ball hits something 
     handleCollisions = (s: State) => { 
 
@@ -98,23 +100,28 @@ function pong() {
       const 
         hitSideWalls = s.ball.position.x <= 0  || s.ball.position.x >= 600,
         hitTopWalls = s.ball.position.y <= 0 || s.ball.position.y >= 600,
-        collidePlayerBoard = (s.ball.position.x <= s.player.position.x + 5 && s.ball.position.x >= s.player.position.x) && (s.ball.position.y < s.player.position.y + 80) && (s.ball.position.y > s.player.position.y), 
+        collidePlayerBoard = (s.ball.position.x <= s.player.position.x + 5 && s.ball.position.x >= s.player.position.x)
+                              && (s.ball.position.y <= s.player.position.y + 80) && (s.ball.position.y >= s.player.position.y), 
         collideComputerBoard = (s.ball.position.x >= s.computer.position.x-5 && s.ball.position.x <= s.computer.position.x) 
-                              && (s.ball.position.y < s.computer.position.y + 80) && (s.ball.position.y > s.computer.position.y)
+                              && (s.ball.position.y <= s.computer.position.y + 80) && (s.ball.position.y >= s.computer.position.y)
         return hitSideWalls ? checkGameOver(changeScore(s))
-            : hitTopWalls ? {...s, ball : {...s.ball, velocity: s.ball.velocity.flipy(-1)}} 
-            : collidePlayerBoard || collideComputerBoard ? {...s, ball : {...s.ball, velocity: new Vector(s.ball.velocity.x*-1, s.ball.velocity.y)}}
+            : hitTopWalls ? {...s, ball : {...s.ball, angle :-s.ball.angle}} 
+            : collidePlayerBoard ? {...s, ball : {...s.ball, angle: bounceAngle(s.player,s.ball)}}
+            : collideComputerBoard ? {...s, ball : {...s.ball,  angle: bounceAngle(s.player,s.ball) }}
             : s
-    }
-  // --------------*`'~*'` Subscribing Observables  `'*~'`*--------------------
-                                // {...s, ball : ballBody, computer_score: s.computer_score + computerScored(s.ball.position), player_score: s.player_score + playerScored(s.ball.position), gameOver: true }
+    },
+    
+    bounceAngle = (b:Board, player:Board) => ((player.position.y + 40 - b.position.y)/40) * 75,
+    ballCalc = (angle: number, velocity: number) => new Vector(velocity*Math.cos(angle), velocity*-1*Math.sin(angle))
+// --------------*`'~*'` Subscribing Observables  `'*~'`*--------------------
+
   const playPong = interval(10).pipe(
     merge(startMoveUp, startMoveDown, restart),
     scan(reduceState, initialState),
     ).subscribe(updateView);
   
+// ------------*`'~*'` Updating GameR View Subscription `'*~'`*-----------------
 
-  // ------------*`'~*'` Updating GameR View Subscription `'*~'`*-----------------
   function updateView(s: State) {
     const
         svg = document.getElementById("canvas")!,
@@ -130,6 +137,9 @@ function pong() {
       const cscore = document.getElementById("computerscore")
       pscore.innerHTML = s.player_score.toString()
       cscore.innerHTML = s.computer_score.toString()
+
+// --------*`'~*'` Restart Game Implementation `'*~'`*---------------
+
       if (s.gameOver) {
         const v = document.createElementNS(svg.namespaceURI, "text")!;
         attr(v,{x:300/6,y:300/2,class:"gameover"});
@@ -138,12 +148,10 @@ function pong() {
         svg.appendChild(v);
       }
   }
-  // --------*`'~*'` Restart Game Implementation `'*~'`*---------------
-
-  // ~ this is the end of the pong() scope ~      
 }
-  // the following simply runs your pong function on window load.  Make sure to leave it in place.
+
   if (typeof window != 'undefined')
     window.onload = ()=>{
       pong();
     }
+            // : collidePlayerBoard || collideComputerBoard ? {...s, ball : {...s.ball, velocity: new Vector(s.ball.velocity.x*-1, s.ball.velocity.y)}}
