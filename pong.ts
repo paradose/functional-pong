@@ -1,8 +1,8 @@
 
 import { fromEvent,interval } from 'rxjs'; 
-import { map,filter,merge,scan, flatMap, takeUntil, throwIfEmpty } from 'rxjs/operators';
+import { map,filter,merge,scan, flatMap, takeUntil } from 'rxjs/operators';
 
-// reference: Tim's asteroids
+// reference: FIT2102, Tim's asteroids, 
 // we use vector because it is immutable and returns new instances of vectors instead of changing its data in place.
 class Vector {
   constructor(public readonly x: number = 0, public readonly y: number =0) {}
@@ -15,6 +15,25 @@ class Vector {
   addy = (s:number) => new Vector(this.x, this.y-s)
   static Zero = new Vector()
 }
+class RNG {
+  // referenced from FIT2014 Week 4 Observables question
+  m = 0x80000000// 2**31
+  a = 1103515245
+  c = 12345
+  state:number
+  constructor(seed) {
+    this.state = seed ? seed : Math.floor(Math.random() * (this.m - 1));
+  }
+  nextInt() {
+    this.state = (this.a * this.state + this.c) % this.m;
+    return this.state;
+  }
+  nextFloat() {
+    // returns in range [0,1]
+    return this.nextInt() / (this.m - 1);
+  }
+}
+
 
 function pong() {
   
@@ -25,10 +44,9 @@ function pong() {
 
   class BoardMove { constructor(public readonly direction:Vector) {} }
   class RestartGameState {constructor(public readonly setGame: Boolean) {} }
-  class BallMove {constructor (public readonly direction:Vector) {} }
 
   // --------*`'~*'` Keyboard Observable Stream `'*~'`*---------------
-
+  // Creating observable streams for each keyboard event where rxjs listens for the events.
   const keyObservables = <T>(e: Event, k: Key, result: ()=> T) => 
     fromEvent<KeyboardEvent>(document, e)
       .pipe(
@@ -59,39 +77,52 @@ function pong() {
   }>
 
   // --------------*`'~*'` Initial States`'*~'`*--------------
-
-  const playerBoard: Board = { id: "player", position: new Vector(75, 300), velocity: new Vector(0,20)}
+  const randomValue = new RNG(20) // having a seed to keep the randomisation constant
+  const playerBoard: Board = { id: "player", position: new Vector(75, 300), velocity: new Vector(0,15)}
   const computerBoard: Board = {id: "computer", position: new Vector(525,300) , velocity: new Vector(0,3)}
-  const ballBody: Board = {id: "ball", position: new Vector(300,300), velocity: new Vector(-2,2)}
-  const initialState: State = {player: playerBoard, computer: computerBoard, ball: ballBody, player_score:0, computer_score: 0, gameOver: false, max_score:7, playerScored: false }
+  const ballBody: Board = {id: "ball", position: new Vector(300,300), velocity: new Vector(2,2)}
+  const initialState: State = {player: playerBoard, computer: computerBoard, ball: ballBody, player_score:0, computer_score: 0,
+                               gameOver: false, max_score:7, playerScored: false}
   
   // -----------*`'~*'` Reducing States and Initial Sates `'*~'`*---------------
 
   const reduceState = (s: State, e:BoardMove | RestartGameState) =>
-    !s.gameOver ?
-    (e instanceof BoardMove ? 
-    {...s, player: {...s.player, position: onBoard(s.player.position,e.direction) ? s.player.position.add(e.direction.scale(s.player.velocity)) : s.player.position}} 
-                    : handleCollisions({...s, computer: moveComputer(s.computer,s.ball), ball: moveBall(s.ball)}) ) // check if ball has collided with anything
+    !s.gameOver ? // if game has not ended we transform the state based on events, otherwise we listen for restart.
+      (e instanceof BoardMove)?
+    // moves the player's board, otherwise checks if ball has collided with anything returning new state
+      {...s, player: {...s.player, position: onBoard(s.player.position,e.direction.scale(s.player.velocity)) ? s.player.position.add(e.direction.scale(s.player.velocity)) : s.player.position}} 
+                    : handleCollisions({...s, computer: moveComputer(s.computer,s.ball), ball: moveBall(s.ball)})
     : e instanceof RestartGameState ? initialState : s
-//  (onBoard(c.position, c.velocity.evenscale(-1)) || onBoard(c.position, c.velocity))
+
   // --------------*`'~*'` Subscribing Observables  `'*~'`*--------------------
   const 
+  // moving the computer when ball heads above, it moves up, otherwise down.
   moveComputer = (c:Board, b: Board) => <Board>{
     ...c,
-    position: b.position.x > 300 ? 
-              ((b.position.y + 5 *2 < c.position.y + 80/2) ? c.position.add(c.velocity.evenscale(-1)) 
-              : c.position.add(c.velocity))
+    position: b.position.x > 300 
+              ?  b.position.y + 5 *2 < c.position.y + 80/2 && onBoard(c.position,c.velocity.evenscale(-1))  // check if computer is on board and top of paddle
+              ? c.position.add(c.velocity.evenscale(-1))
+              : b.position.y + 5 *2 > c.position.y + 80/2 && onBoard(c.position,c.velocity.evenscale(1)) ? // otherwise 
+              c.position.add(c.velocity)
+              : c.position 
               : c.position
+
   },
-  // height of the board is 80 and canvas size.
+  // height of the board is 80 and canvas size is 600. here we detect if on board or not.
+  // functions below are used to check for collisions
+
   onBoard = (start: Vector, dest: Vector) => (start.add(dest).y <= 600-80 ) && (start.add(dest).y >=0),
   moveBall = (o:Board) => <Board>{...o, position: o.position.add(o.velocity)},
-
+  randomSide = () => randomValue.nextFloat() > 0.5 ? -1 : 1,
   // true if player score, false if computer scored, resets ball to original position
-  changeScore = (s: State) => s.ball.position.x < 300 ? {...s, ball: ballBody, player_score: s.player_score+1, playerScored: false} 
-                              : {...s, ball: ballBody, computer_score: s.computer_score+1, playerScored: true }, 
+  changeScore = (s: State) => s.ball.position.x < 300 
+                              ? {...s, ball: {...ballBody, velocity: ballBody.velocity.flipx(randomSide())}, 
+                                      player_score: s.player_score+1, playerScored: false, delay: true} 
+                              : {...s, ball: {...ballBody, velocity: ballBody.velocity.flipx(randomSide())}, 
+                                      computer_score: s.computer_score+1, playerScored: true, delay: true}, 
   
   checkGameOver = (s:State) => <State>{...s, gameOver : s.player_score==s.max_score || s.computer_score==s.max_score},
+  
   // changing angles/ game state when the ball hits something 
   handleCollisions = (s: State) => { 
     const 
@@ -101,12 +132,12 @@ function pong() {
                             && (s.ball.position.y <= s.player.position.y+80 && s.ball.position.y >= s.player.position.y), 
       collideComputerBoard = (s.ball.position.x >= s.computer.position.x && s.ball.position.x <= s.computer.position.x+5) 
                             && (s.ball.position.y <= s.computer.position.y + 80 && s.ball.position.y >= s.computer.position.y),
-                            // s.ball.velocity.flipx(-1).addy(1) : s.ball.velocity.flipx(-1).addy(-1)
+
       // checks if difference between ball is more than half the height of the paddle
       topOfBoard = (bally: number, playery: number) => (bally<playery+40)
       return hitSideWalls ? checkGameOver(changeScore(s))
-          : hitTopWalls ? {...s, ball : {...s.ball, velocity: s.ball.velocity.flipy(-1)}} 
-          : collidePlayerBoard ? {...s, ball : {...s.ball, velocity: topOfBoard(s.ball.position.y, s.player.position.y)
+          : hitTopWalls ? {...s,ball : {...s.ball, velocity: s.ball.velocity.flipy(-1)}} 
+          : collidePlayerBoard ? {...s, ball : {...s.ball, velocity: topOfBoard(s.ball.position.y, s.player.position.y) 
                                                                       ? s.ball.velocity.flipx(-1).addy(1) : s.ball.velocity.flipx(-1).addy(-1) }}
           : collideComputerBoard ?  {...s, ball : {...s.ball, velocity: topOfBoard(s.ball.position.y, s.computer.position.y)
                                                                       ? s.ball.velocity.flipx(-1).addy(1) : s.ball.velocity.flipx(-1).addy(-1)}}
@@ -138,6 +169,7 @@ function pong() {
       cscore.innerHTML = s.computer_score.toString()
 
 // --------*`'~*'` Restart Game Implementation `'*~'`*---------------
+    // if game has ended, we display a winning message depending on the score, and offer user option to restart.
       if (s.gameOver) {
         const gameOver = document.getElementById("gameover")
         const winningmessage = "You " +( s.playerScored ? " won" : " lost") +  "! Press R to restart!";
